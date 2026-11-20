@@ -50,7 +50,7 @@ function fetchWanted_(c) {
 
 function fetchJumpit_(c) {
   const d = JSON.parse(get_('https://jumpit-api.saramin.co.kr/api/positions?page=1&keyword=' + encodeURIComponent(c.kw)));
-  return d.result.positions.map(p => ['점핏', 'j' + p.id, p.title, p.companyName, (p.techStacks || []).join(', '),
+  return d.result.positions.map(p => ['점핏', 'j' + p.id, strip(p.title), p.companyName, (p.techStacks || []).join(', '),
     (p.locations || []).join(', '), contractOf(p.title),
     p.newcomer && !p.maxCareer ? '신입' : (p.minCareer ? '경력 ' : '신입·경력 ') + p.minCareer + '~' + p.maxCareer + '년', p.alwaysOpen ? '상시' : String(p.closedAt).slice(0, 10),
     'https://jumpit.saramin.co.kr/position/' + p.id, salaryOf(p.title)]);
@@ -159,6 +159,7 @@ function collectJobs() {
   if (rows.length) sh.getRange(sh.getLastRow() + 1, 1, rows.length, HEADERS.length).setValues(rows);
   let ctErr = '';
   try { log.push('기업형태 ' + updateCompanyTypes_() + '곳'); } catch (e) { ctErr = e.message.slice(0, 120); log.push('기업형태 실패: ' + ctErr); }
+  try { log.push('합쳐진 공고 ' + updateMergedSheet() + '그룹'); } catch (e) { log.push('합쳐진 공고 탭 실패: ' + e.message.slice(0, 80)); }
   recordRun_(now, stat, ctErr, rows.length);
   Logger.log(log.join(' | '));
   return log.join(' | ');
@@ -189,6 +190,21 @@ function recordRun_(when, stat, ctErr, added) {
     if (to) MailApp.sendEmail(to, '[채용 보드] 수집 문제 ' + problems.length + '건',
       problems.join('\n') + '\n\n0건은 사이트 화면 구조가 바뀌었을 가능성이 커요. 수집 기록: runs 시트');
   }
+}
+
+/** 'merged' 시트: 화면에서 한 카드로 합쳐진 공고를 사이트별 원래 제목과 함께 기록 (편집기에서 직접 실행해도 됨) */
+function updateMergedSheet() {
+  const groups = getJobs().filter(j => j.members && j.members.length > 1);
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sh = ss.getSheetByName('merged') || ss.insertSheet('merged');
+  const rows = [['group', 'category', '대표 제목', '대표 회사', '사이트', '사이트별 제목', '사이트별 회사', 'link', '대표 여부']];
+  groups.forEach((g, i) => g.members.forEach((m, k) => rows.push([i + 1, g.category, g.title, g.company, m.source, m.title, m.company, m.link,
+    k === g.rep ? '대표' : ''])));
+  sh.clear();
+  sh.getRange(1, 1, rows.length, rows[0].length).setValues(rows);
+  sh.setFrozenRows(1);
+  sh.getRange(1, 1, 1, rows[0].length).setFontWeight('bold').setBackground('#e7ecfb');
+  return groups.length;
 }
 
 /** 화면 상단에 보여줄 마지막 수집 상태 */
@@ -243,6 +259,7 @@ function getJobs() {
     const o = Object.fromEntries(h.map((k, i) => [k, r[i]]));
     const ca = raw[ri + 1][h.indexOf('collected_at')];
     o.ts = ca instanceof Date ? ca.getTime() : 0;
+    o.title = strip(o.title); // 예전에 저장된 점핏 제목의 <span> 태그 정리
     o.companyType = types[normName(o.company)] || '미분류';
     o.due = dueOf_(o.deadline, o.collected_at);
     o.seen = dueOf_(o.last_seen || o.collected_at, null) || today;
@@ -278,26 +295,74 @@ function dueOf_(raw, collected) {
   return '';
 }
 
-/** 같은 직무 탭 안에서 회사명+제목이 같은 공고(사이트만 다른 것)를 하나로 합침 */
+/** 같은 직무 탭 안에서 사이트만 다른 같은 공고를 하나로 합침
+ *  조건: ① 서로 다른 사이트 ② 회사명이 같음(법인 표기·괄호 속 영문/브랜드·지점명 무시, 한쪽이 다른 쪽을 포함해도 인정)
+ *        ③ 제목이 같거나, 유사도 0.75 이상이면서 신입/경력·계약직·기수·연차 같은 구분 단어가 충돌하지 않음 */
 const normTitle = t => String(t).replace(/\[[^\]]*\]/g, '').replace(/[^0-9a-z가-힣()]/gi, '').toLowerCase();
+const coKey_ = s => String(s).replace(/\(주\)|㈜|주식회사|\(유\)|유한회사|\(재\)|\(사\)|농업회사법인|사단법인|재단법인/g, '')
+  .replace(/\([^)]*\)/g, '').replace(/\S*(사옥|지점|본점)/g, '').replace(/\s/g, '').toLowerCase();
+const titleKey_ = t => strip(t).replace(/\[[^\]]*\]/g, '').replace(/채용\s*공고|채용|모집|공고|입니다|합니다/g, '')
+  .replace(/[^0-9a-z가-힣]/gi, '').toLowerCase();
+// 구분 단어: 서로 다르면 다른 공고로 봄 (예: 계약직 vs 경력직, 2기 vs 3기, 7년 이상 vs 2~7년, 인턴 vs 주니어)
+const DIST_RE = /신입|경력|인턴|주니어|시니어|계약직|정규직|전환형|체험형|\d+\s*~\s*\d+\s*년|\d+\s*(년|기|차)|spanish|arabic|english|japanese|chinese/gi;
+const distOf_ = t => new Set((strip(t).match(DIST_RE) || []).map(x => x.replace(/\s/g, '').toLowerCase()));
+function bigrams_(s) { const a = new Set(); for (let i = 0; i < s.length - 1; i++) a.add(s.slice(i, i + 2)); return a; }
+function similarity_(a, b) {
+  const A = bigrams_(a), B = bigrams_(b); if (!A.size || !B.size) return 0;
+  let n = 0; A.forEach(x => { if (B.has(x)) n++; }); return 2 * n / (A.size + B.size);
+}
+// 제목 단어 중 상대 제목에 없는 단어: 양쪽 모두에 있으면 직무가 다른 것으로 봄 (예: 전략컨설팅 vs 인사조직컨설팅)
+const wordsOf_ = t => strip(t).replace(/\[[^\]]*\]/g, ' ').replace(/채용\s*공고|채용|모집|공고|입니다|합니다/g, ' ')
+  .toLowerCase().split(/[^0-9a-z가-힣]+/).filter(w => w.length >= 2);
+const onlyIn_ = (words, otherKey) => words.filter(w => !otherKey.includes(w));
+function sameCompany_(a, b) {
+  if (a === b) return true;
+  const [s, l] = a.length < b.length ? [a, b] : [b, a];
+  return s.length >= 3 && l.includes(s);
+}
+function samePosting_(a, b) {
+  if (a.category !== b.category) return false;
+  if (a.sources.some(x => b.sources.some(y => y.source === x.source))) return false; // 같은 사이트끼리는 합치지 않음
+  if (!sameCompany_(a._co, b._co)) return false;
+  if (a._tk === b._tk) return true;
+  if (similarity_(a._tk, b._tk) < 0.75) return false;
+  if (onlyIn_(a._words, b._tk).length && onlyIn_(b._words, a._tk).length) return false;
+  const da = a._dist, db = b._dist;
+  if (da.size && db.size && ([...da].some(x => !db.has(x)) || [...db].some(x => !da.has(x)))) return false;
+  return true;
+}
+/** 대표 제목 점수: 단어 수가 많을수록, 같으면 글자 수가 길수록 (정보가 많은 제목) */
+const infoScore_ = t => wordsOf_(t).length * 1000 + strip(t).length;
 const FRAME_OK = ['사람인', '잡코리아', '인크루트', '점핏', '원티드']; // 분할 뷰에 먼저 띄울 순서 (원티드는 삽입 차단)
 function mergeDuplicates_(jobs) {
-  const byKey = {}, out = [];
+  const out = [];
   jobs.forEach(j => {
-    const k = j.category + '|' + normName(j.company) + '|' + normTitle(j.title);
-    const src = { source: j.source, link: j.link };
-    const m = byKey[k];
-    if (!m) { j.sources = [src]; byKey[k] = j; out.push(j); return; }
-    if (!m.sources.some(x => x.source === j.source)) m.sources.push(src);
+    j.sources = j.sources || [{ source: j.source, link: j.link }];
+    j.members = j.members || [{ source: j.source, title: j.title, company: j.company, link: j.link, stack: j.stack, location: j.location }];
+    j._co = coKey_(j.company); j._tk = titleKey_(j.title); j._dist = distOf_(j.title); j._words = wordsOf_(j.title);
+    const m = out.find(x => samePosting_(x, j));
+    if (!m) { out.push(j); return; }
+    j.sources.forEach(x => m.sources.push(x));
+    j.members.forEach(x => m.members.push(x));
     if (!m.due || (j.due && j.due < m.due)) { m.due = j.due || m.due; }
     if (m.career === '미표기' && j.career !== '미표기') m.career = j.career;
     if (m.contract === '미표기' && j.contract !== '미표기') m.contract = j.contract;
     if (!m.location && j.location) m.location = j.location;
     if (j.salary) m.salary = [...new Set((m.salary ? m.salary.split(', ') : []).concat(j.salary.split(', ')))].join(', ');
     if (j.stack && !m.stack) m.stack = j.stack;
+    if (m.companyType === '미분류' && j.companyType && j.companyType !== '미분류') m.companyType = j.companyType;
   });
-  out.forEach(j => { j.sources.sort((a, b) => FRAME_OK.indexOf(a.source) - FRAME_OK.indexOf(b.source));
-    j.source = j.sources[0].source; j.link = j.sources[0].link; });
+  out.forEach(j => {
+    if (j.members.length > 1) {
+      const best = j.members.slice().sort((a, b) => infoScore_(b.title) - infoScore_(a.title))[0];
+      j.rep = j.members.indexOf(best); // 'merged' 시트에서 대표 행 표시용
+      j.title = best.title; j.company = best.company;
+      const longest = k => j.members.map(x => x[k] || '').sort((a, b) => b.length - a.length)[0];
+      j.stack = longest('stack'); j.location = longest('location');
+    }
+    // 분할 뷰는 화면 삽입이 되는 사이트를 먼저 연다
+    j.sources.sort((a, b) => FRAME_OK.indexOf(a.source) - FRAME_OK.indexOf(b.source));
+    j.source = j.sources[0].source; j.link = j.sources[0].link; delete j._co; delete j._tk; delete j._dist; delete j._words; });
   return out;
 }
 
