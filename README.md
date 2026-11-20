@@ -3,6 +3,10 @@
 4개 채용 사이트의 공고를 매일 자동으로 모아 **직무별로 한 화면에서 비교**하는 개인 프로젝트입니다.
 서버 없이 **Google Sheets(저장) + Google Apps Script(수집·웹앱)** 만으로 동작합니다.
 
+**만든 이유:** 데이터 직무 공고가 여러 사이트에 흩어져 있고, 같은 공고가 사이트마다 조금씩 다른 제목으로 중복돼 매일 비교하기 번거로웠습니다.
+
+**사용 기술:** Google Apps Script · JavaScript · Google Sheets · HTML/CSS
+
 **데모:** https://script.google.com/macros/s/AKfycbyqwvf315QG05Z7w8d-xo4szlatrg8TCUiqiO00QHiQG4a3uwCgilBUh16fnirgd3M1/exec (Google 계정 로그인 필요)
 
 ![메인 화면](docs/board.png)
