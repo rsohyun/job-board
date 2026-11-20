@@ -303,8 +303,32 @@ const normTitle = t => String(t).replace(/\[[^\]]*\]/g, '').replace(/[^0-9a-z가
 const ABC_KO = { A: '에이', B: '비', C: '씨', D: '디', E: '이', F: '에프', G: '지', H: '에이치', I: '아이', J: '제이', K: '케이', L: '엘', M: '엠',
   N: '엔', O: '오', P: '피', Q: '큐', R: '알', S: '에스', T: '티', U: '유', V: '브이', W: '더블유', X: '엑스', Y: '와이', Z: '제트' };
 const readAcronyms_ = s => String(s).replace(/[A-Z]{2,6}(?![a-z])/g, w => w.split('').map(c => ABC_KO[c]).join(''));
-const coKey_ = s => readAcronyms_(s).replace(/\(주\)|㈜|주식회사|\(유\)|유한회사|\(재\)|\(사\)|농업회사법인|사단법인|재단법인/g, '')
+const baseCoKey_ = s => readAcronyms_(s).replace(/\(주\)|㈜|주식회사|\(유\)|유한회사|\(재\)|\(사\)|농업회사법인|사단법인|재단법인/g, '')
   .replace(/\([^)]*\)/g, '').replace(/\S*(사옥|지점|본점)/g, '').replace(/\s/g, '').toLowerCase();
+/** 회사명 비교 키: 기본 정리 후 'aliases' 시트의 별칭을 기준 이름으로 바꿈 (예: Klemove → 클레무브) */
+const coKey_ = s => aliases_().reduce((k, [from, to]) => k.split(from).join(to), baseCoKey_(s));
+
+const ALIAS_SHEET = 'aliases';
+let ALIASES_CACHE = null; // 한 번 실행하는 동안만 캐시
+/** 'aliases' 시트: A열 별칭, B열 기준 이름, C열 메모. 없으면 예시 한 줄과 함께 만듦 */
+function aliases_() {
+  if (ALIASES_CACHE) return ALIASES_CACHE;
+  if (typeof SpreadsheetApp === 'undefined') return (ALIASES_CACHE = []); // 로컬 테스트용
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sh = ss.getSheetByName(ALIAS_SHEET);
+  if (!sh) {
+    sh = ss.insertSheet(ALIAS_SHEET);
+    sh.getRange(1, 1, 2, 3).setValues([['별칭', '기준 이름', '메모'],
+      ['Klemove', '클레무브', '예시: HL Klemove = 에이치엘클레무브. 한 줄에 하나씩, 부분 일치로 바뀜']]);
+    sh.setFrozenRows(1);
+    sh.getRange(1, 1, 1, 3).setFontWeight('bold').setBackground('#e7ecfb');
+  }
+  ALIASES_CACHE = sh.getDataRange().getValues().slice(1)
+    .map(r => [baseCoKey_(r[0]), baseCoKey_(r[1])])
+    .filter(([f, t]) => f && t && f !== t)
+    .sort((x, y) => y[0].length - x[0].length); // 긴 별칭부터 바꿈
+  return ALIASES_CACHE;
+}
 const titleKey_ = t => strip(t).replace(/\[[^\]]*\]/g, '').replace(/채용\s*공고|채용|모집|공고|입니다|합니다/g, '')
   .replace(/[^0-9a-z가-힣]/gi, '').toLowerCase();
 // 구분 단어: 서로 다르면 다른 공고로 봄 (예: 계약직 vs 경력직, 2기 vs 3기, 7년 이상 vs 2~7년, 인턴 vs 주니어)
