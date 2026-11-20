@@ -11,7 +11,7 @@ const CATEGORIES = [
   { name: 'AX 컨설턴트', kw: 'AX 컨설턴트', kws: ['AX 컨설턴트', 'AI 전환', 'DX 컨설팅'], re: /AX|컨설턴트|컨설팅|consult|전환/i },
 ];
 const SHEET = 'jobs_v3'; // 스키마(경력 열)가 바뀌어 새 시트 사용 (기존 시트는 그대로 둠)
-const HEADERS = ['category', 'source', 'id', 'title', 'company', 'stack', 'location', 'contract', 'career', 'deadline', 'link', 'collected_at', 'salary', 'last_seen']; // 뒤의 두 열은 나중에 추가돼 맨 끝
+const HEADERS = ['category', 'source', 'id', 'title', 'company', 'stack', 'location', 'contract', 'career', 'deadline', 'link', 'collected_at', 'salary', 'last_seen', 'csize', 'ctags']; // 뒤의 두 열은 나중에 추가돼 맨 끝
 const UA = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130 Safari/537.36' };
 const CONTRACT_RE = /정규직|계약직|인턴|프리랜서|파견직|아르바이트|위촉직/;
 
@@ -41,13 +41,6 @@ const salaryOf = (...texts) => [...new Set(texts.join(' | ').match(SALARY_RE) ||
   .filter(s => /\d|인상|상위/.test(s) && !/협의|회사내규|면접 후/.test(s)).join(', ');
 
 // 각 fetcher는 [source, id, title, company, stack, location, contract, career, deadline, link, salary] 를 반환
-function fetchWanted_(c) {
-  const d = JSON.parse(get_('https://www.wanted.co.kr/api/chaos/search/v1/results?tab=position&country=kr&limit=50&query=' + encodeURIComponent(c.kw)));
-  return ((d.positions && d.positions.data) || []).map(j => ['원티드', 'w' + j.id, j.position, j.company.name, '',
-    (j.address && j.address.location) || '', contractOf(j.position), j.is_newbie ? '신입·경력' : '경력', j.due_time ? j.due_time.slice(0, 10) : '상시',
-    'https://www.wanted.co.kr/wd/' + j.id, salaryOf(j.position)]);
-}
-
 function fetchJumpit_(c) {
   const d = JSON.parse(get_('https://jumpit-api.saramin.co.kr/api/positions?page=1&keyword=' + encodeURIComponent(c.kw)));
   return d.result.positions.map(p => ['점핏', 'j' + p.id, strip(p.title), p.companyName, (p.techStacks || []).join(', '),
@@ -146,7 +139,7 @@ function collectJobs() {
           lastSeen[i] = [now]; if (x[10]) salaries[i] = [x[10]]; if (dueOf_(x[8], now)) deadlines[i] = [x[8]]; });
         const r = got.filter(x => !seen.has(c.name + '|' + x[1]));
         r.forEach(x => seen.add(c.name + '|' + x[1]));
-        rows = rows.concat(r.map(x => [c.name].concat(x.slice(0, 10), [now, x[10] || '', now])));
+        rows = rows.concat(r.map(x => [c.name].concat(x.slice(0, 10), [now, x[10] || '', now, '', ''])));
         st.added += r.length;
       } catch (e) {
         st.errors.push(c.name + '/' + kw + ': ' + e.message.slice(0, 80)); // 한 곳이 막혀도 나머지는 저장
@@ -158,14 +151,15 @@ function collectJobs() {
     .forEach(([n, v]) => sh.getRange(2, COL(n) + 1, v.length, 1).setValues(v));
   if (rows.length) sh.getRange(sh.getLastRow() + 1, 1, rows.length, HEADERS.length).setValues(rows);
   let ctErr = '';
-  try { log.push('기업형태 ' + updateCompanyTypes_() + '곳'); } catch (e) { ctErr = e.message.slice(0, 120); log.push('기업형태 실패: ' + ctErr); }
+  try { log.push('기업형태 남음 ' + fillCompanyInfo(90000)); } catch (e) { ctErr = e.message.slice(0, 120); log.push('기업형태 실패: ' + ctErr); }
   try { log.push('합쳐진 공고 ' + updateMergedSheet() + '그룹'); } catch (e) { log.push('합쳐진 공고 탭 실패: ' + e.message.slice(0, 80)); }
+  try { buildPageData_(); } catch (e) { log.push('화면 캐시 실패: ' + e.message.slice(0, 80)); }
   recordRun_(now, stat, ctErr, rows.length);
   Logger.log(log.join(' | '));
   return log.join(' | ');
 }
 
-const SOURCES = [['원티드', fetchWanted_], ['점핏', fetchJumpit_], ['사람인', fetchSaramin_], ['잡코리아', fetchJobkorea_], ['인크루트', fetchIncruit_]];
+const SOURCES = [['점핏', fetchJumpit_], ['사람인', fetchSaramin_], ['잡코리아', fetchJobkorea_], ['인크루트', fetchIncruit_]];
 
 /** 사이트 상태 판정: 전부 실패면 '실패', 받은 공고가 0건이면 '0건'(사이트 구조 변경 의심), 일부 실패면 '일부 실패' */
 function sourceState_(st) {
@@ -216,27 +210,49 @@ function lastRun_() {
 }
 
 // 기업 형태: 채용 목록엔 없어서 사람인의 기업형태 검색 필터로 '회사명 → 형태' 표를 만들고, 다른 사이트 공고에도 회사명으로 붙임
-const COMPANY_TYPES = [['대기업', 'scale001'], ['중견기업', 'scale003'], ['중소기업', 'scale004'], ['스타트업', 'scale005'],
-  ['외국계', 'foreign'], ['공기업·공공기관', 'public']];
-const normName = s => String(s).replace(/\(주\)|㈜|주식회사|\(유\)|유한회사|\(재\)|\(사\)|\s/g, '').toLowerCase();
-
-function updateCompanyTypes_() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sh = ss.getSheetByName('company_types') || ss.insertSheet('company_types');
-  const map = {};
-  sh.getDataRange().getValues().slice(1).forEach(r => { if (r[0]) map[r[0]] = r[1]; }); // 이전 결과 유지
-  CATEGORIES.forEach(c => COMPANY_TYPES.forEach(([label, code]) => {
-    const html = get_('https://www.saramin.co.kr/zf_user/search/recruit?recruitPageCount=100&searchword=' +
-      encodeURIComponent(c.kw) + '&company_type%5B%5D=' + code);
-    html.split('class="item_recruit"').slice(1).forEach(b => {
-      const corp = strip((b.match(/class="corp_name">[\s\S]*?>([\s\S]*?)<\/a>/) || [])[1]);
-      if (corp) map[normName(corp)] = label;
-    });
-  }));
-  const rows = Object.keys(map).map(k => [k, map[k]]);
-  sh.clear();
-  sh.getRange(1, 1, rows.length + 1, 2).setValues([['company_key', 'type']].concat(rows));
-  return rows.length;
+// ───────── 기업형태: 공고 상세의 기업 정보에서 읽기 ─────────
+// csize = 규모(대기업·중견기업·중소기업·공기업·공공기관), ctags = 특성(외국계·스타트업·유가증권·코스닥·코넥스), 못 읽으면 csize '-'
+function companyInfoOf_(text) {
+  const t = String(text || '');
+  const size = /공기업|공공기관/.test(t) ? '공기업·공공기관' : /대기업/.test(t) ? '대기업' : /중견/.test(t) ? '중견기업' : /중소/.test(t) ? '중소기업' : '';
+  const tags = [[/외국계|외국\s*투자/, '외국계'], [/스타트업/, '스타트업'], [/코스피|유가증권|KOSPI/i, '유가증권'], [/코스닥|KOSDAQ/i, '코스닥'], [/코넥스/, '코넥스']]
+    .filter(([re]) => re.test(t)).map(x => x[1]);
+  return [size, tags.join(',')];
+}
+/** 사이트별 공고 상세에서 기업 정보 원문만 잘라냄 (해당 없는 사이트는 '') */
+function companyRawOf_(source, link) {
+  const flat = h => strip(h).replace(/\s+/g, ' ');
+  if (source === '사람인') {
+    const id = (link.match(/rec_idx=(\d+)/) || [])[1];
+    return id ? (flat(get_('https://www.saramin.co.kr/zf_user/jobs/view?rec_idx=' + id)).match(/기업형태\s*(.*?)\s*(?:업종|사원수|설립일|대표자|홈페이지)/) || [])[1] || '' : '';
+  }
+  if (source === '잡코리아') return (flat(get_(link).replace(/\\"/g, '"')).match(/기업구분\s*(.*?)\s*산업/) || [])[1] || '';
+  if (source === '인크루트') { const t = flat(get_(link, 'EUC-KR'));
+    return ((t.match(/기업규모\s*(\S+)/) || [])[1] || '') + (/#스타트업/.test(t) ? ' 스타트업' : ''); }
+  if (source === '점핏') return (get_(link).replace(/\\"/g, '"').match(/"name":"(대기업|중견기업|중소기업|스타트업|외국계|공기업|코스피|코스닥|유가증권|코넥스)"/g) || []).join(' ');
+  return '';
+}
+/** 못 읽은('-') 공고를 다시 시도 (사이트가 잠깐 막았을 때, 편집기에서 직접 실행) */
+function retryCompanyInfo() {
+  const sh = getSheet_(), v = sh.getDataRange().getValues(), cS = v[0].indexOf('csize');
+  v.forEach((r, i) => { if (i && r[cS] === '-') sh.getRange(i + 1, cS + 1).setValue(''); });
+  return fillCompanyInfo();
+}
+/** 기업형태가 빈 공고를 시간 안에서 채움 (수집 끝에 자동 실행, 편집기에서 직접 반복 실행해도 됨). 남은 개수 반환 */
+function fillCompanyInfo(budgetMs) {
+  const sh = getSheet_(), start = Date.now(), limit = budgetMs || 270000;
+  const v = sh.getDataRange().getValues(), H = v[0];
+  const cS = H.indexOf('csize'), cL = H.indexOf('link'), cSrc = H.indexOf('source');
+  const todo = v.map((r, i) => i).filter(i => i > 0 && !v[i][cS]);
+  let n = 0;
+  for (const i of todo) {
+    if (Date.now() - start > limit) break;
+    let info = ['-', ''];
+    try { const r = companyInfoOf_(companyRawOf_(v[i][cSrc], v[i][cL])); if (r[0] || r[1]) info = [r[0] || '-', r[1]]; } catch (e) {}
+    sh.getRange(i + 1, cS + 1, 1, 2).setValues([info]); n++;
+  }
+  Logger.log('기업형태 채움 ' + n + ' · 남음 ' + (todo.length - n));
+  return todo.length - n;
 }
 
 /** 매일 새벽 6~7시 자동 수집 트리거 설치 (한 번만 실행). Google 트리거는 지정한 시각부터 1시간 안의 임의 시점에 실행됨 */
@@ -250,9 +266,15 @@ function getJobs() {
   const v = range.getDisplayValues();
   const raw = range.getValues(); // 첫 수집 시각(ms)을 NEW 배지에 사용
   const h = v.shift();
-  const ct = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('company_types');
-  const types = {};
-  if (ct) ct.getDataRange().getValues().slice(1).forEach(r => types[r[0]] = r[1]);
+  // 같은 회사의 다른 공고에서 읽은 기업 정보로 빈칸 채우기
+  const byCo = {};
+  // 헤드헌팅사 공고는 고객사 규모가 적혀 공고마다 다를 수 있어, 값이 서로 다른 회사는 빈칸을 채우지 않음
+  v.forEach(r => { const sz = r[h.indexOf('csize')]; if (!sz || sz === '-') return; const k = coKey_(r[h.indexOf('company')]);
+    byCo[k] = byCo[k] && byCo[k][0] !== sz ? ['', ''] : byCo[k] || [sz, r[h.indexOf('ctags')]]; });
+  // 'dart' 탭: 이 PC에서 DART 기업개황을 받아 붙여넣은 표 (company_key → 유가증권/코스닥/코넥스/비상장)
+  const dt = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('dart');
+  const listing = {};
+  if (dt) dt.getDataRange().getValues().slice(1).forEach(r => { if (r[0]) listing[r[0]] = r[2]; });
   const today = ymd_(new Date());
   const staleBefore = ymd_(new Date(Date.now() - STALE_DAYS * 864e5));
   const jobs = v.map((r, ri) => {
@@ -260,7 +282,11 @@ function getJobs() {
     const ca = raw[ri + 1][h.indexOf('collected_at')];
     o.ts = ca instanceof Date ? ca.getTime() : 0;
     o.title = strip(o.title); // 예전에 저장된 점핏 제목의 <span> 태그 정리
-    o.companyType = types[normName(o.company)] || '미분류';
+    const co = o.csize && o.csize !== '-' ? [o.csize, o.ctags] : byCo[coKey_(o.company)] || ['', ''];
+    const tags = String(co[1] || '').split(',').filter(Boolean);
+    o.companyType = co[0] || '미분류';
+    o.feats = tags.filter(t => /외국계|스타트업/.test(t));
+    o.listing = tags.find(t => /유가증권|코스닥|코넥스/.test(t)) || listing[baseCoKey_(o.company)] || '미확인';
     o.due = dueOf_(o.deadline, o.collected_at);
     o.seen = dueOf_(o.last_seen || o.collected_at, null) || today;
     return o;
@@ -361,7 +387,7 @@ function samePosting_(a, b) {
 }
 /** 대표 제목 점수: 단어 수가 많을수록, 같으면 글자 수가 길수록 (정보가 많은 제목) */
 const infoScore_ = t => wordsOf_(t).length * 1000 + strip(t).length;
-const FRAME_OK = ['사람인', '잡코리아', '인크루트', '점핏', '원티드']; // 분할 뷰에 먼저 띄울 순서 (원티드는 삽입 차단)
+const FRAME_OK = ['사람인', '잡코리아', '인크루트', '점핏']; // 분할 뷰에 먼저 띄울 순서
 function mergeDuplicates_(jobs) {
   const out = [];
   jobs.forEach(j => {
@@ -379,6 +405,8 @@ function mergeDuplicates_(jobs) {
     if (j.salary) m.salary = [...new Set((m.salary ? m.salary.split(', ') : []).concat(j.salary.split(', ')))].join(', ');
     if (j.stack && !m.stack) m.stack = j.stack;
     if (m.companyType === '미분류' && j.companyType && j.companyType !== '미분류') m.companyType = j.companyType;
+    m.feats = [...new Set((m.feats || []).concat(j.feats || []))];
+    if ((!m.listing || m.listing === '미확인') && j.listing && j.listing !== '미확인') m.listing = j.listing;
   });
   out.forEach(j => {
     if (j.members.length > 1) {
@@ -395,12 +423,34 @@ function mergeDuplicates_(jobs) {
 }
 
 /** 웹앱: ?format=json 이면 JSON API, 아니면 보드 화면 */
+// ───────── 화면 데이터 캐시 ─────────
+// 웹앱을 열 때마다 시트를 읽고 합치면 느려서, 화면용 JSON을 CacheService에 6시간 보관 (수집 직후 새로 만듦)
+// CacheService 값 하나는 100KB까지라 한글(3바이트) 기준 3만 자씩 나눠 저장
+const PD_CHUNK = 30000, PD_TTL = 21600;
+const PD_DROP = ['members', 'collected_at', 'last_seen', 'seen', 'csize', 'ctags', 'rep']; // 화면에서 안 쓰는 필드
+function buildPageData_() {
+  const s = JSON.stringify(getJobs().map(j => { PD_DROP.forEach(k => delete j[k]); return j; }));
+  const parts = {};
+  for (let i = 0; i * PD_CHUNK < s.length; i++) parts['pd_' + i] = s.slice(i * PD_CHUNK, (i + 1) * PD_CHUNK);
+  const c = CacheService.getScriptCache();
+  c.putAll(parts, PD_TTL); c.put('pd_n', String(Object.keys(parts).length), PD_TTL);
+  return s;
+}
+function pageData_() {
+  const c = CacheService.getScriptCache(), n = +c.get('pd_n');
+  if (n) { const keys = [...Array(n).keys()].map(i => 'pd_' + i), got = c.getAll(keys);
+    if (keys.every(k => got[k] != null)) return keys.map(k => got[k]).join(''); }
+  return buildPageData_();
+}
+/** 별칭 탭 등을 고친 뒤 화면에 바로 반영하고 싶을 때 편집기에서 실행 */
+function refreshPageData() { return buildPageData_().length; }
+
 function doGet(e) {
   if (e && e.parameter.format === 'json') {
     return ContentService.createTextOutput(JSON.stringify(getJobs())).setMimeType(ContentService.MimeType.JSON);
   }
   const t = HtmlService.createTemplate(PAGE);
-  t.data = JSON.stringify(getJobs());
+  t.data = pageData_();
   t.cats = JSON.stringify(CATEGORIES.map(c => c.name));
   t.run = JSON.stringify(lastRun_());
   return t.evaluate().setTitle('채용 보드').addMetaTag('viewport', 'width=device-width, initial-scale=1');
@@ -459,7 +509,7 @@ body.split .grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 .card{background:#fff;border-radius:10px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.08);position:relative;cursor:pointer;border:2px solid transparent}
 .card:hover,.card.sel{border-color:#1f3a8a}.card h3{margin:6px 28px 4px 0;font-size:15px}
 .chip{display:inline-block;font-size:12px;padding:2px 8px;border-radius:99px;background:#e8eefc;color:#1f3a8a;margin:0 4px 2px 0}
-.chip.ct{background:#eef7ee;color:#256029}.chip.co{background:#f3eefc;color:#5b3aa8}.chip.sal{background:#fff4d6;color:#8a5a00;font-weight:600}.chip.cr{background:#fdf1e6;color:#8a4b12}
+.chip.ct{background:#eef7ee;color:#256029}.chip.co{background:#f3eefc;color:#5b3aa8}.chip.ls{background:#e6f6f4;color:#0b6e63;font-weight:600}.chip.sal{background:#fff4d6;color:#8a5a00;font-weight:600}.chip.cr{background:#fdf1e6;color:#8a4b12}
 .meta{font-size:13px;color:#555;margin-top:6px}.stack{font-size:12px;color:#777;margin-top:6px}
 .star{position:absolute;top:10px;right:10px;border:0;background:none;font-size:20px;cursor:pointer;padding:0;color:#bbb}.star.on{color:#f5b301}
 #view{display:none;flex:0 0 var(--vw,50%);min-width:280px;max-width:80%;flex-direction:column;background:#fff}
@@ -478,11 +528,11 @@ body.dragging #frame{pointer-events:none}
 .go{display:inline-block;margin-top:14px;padding:12px 20px;border-radius:8px;background:#1f3a8a;color:#fff;text-decoration:none;font-weight:600}
 @media (max-width:700px){body.split #left,body.split #gutter{display:none}body.split #view{flex:1;max-width:none}}
 </style></head><body>
-<header><h1>채용 보드</h1><div class="sub">원티드 · 점핏 · 사람인 · 잡코리아 · 인크루트 자동 수집 · 매일 06~07시<span class="runst" id="runst"></span></div>
+<header><h1>채용 보드</h1><div class="sub">점핏 · 사람인 · 잡코리아 · 인크루트 자동 수집 · 매일 06~07시<span class="runst" id="runst"></span></div>
 <div class="tabs" id="tabs" role="tablist"></div></header>
 <main><div id="left">
 <div class="bar"><input id="q" placeholder="회사·직무·기술스택 검색 (예: SQL, MVP)" aria-label="키워드 검색">
-<div class="ms" id="src"></div><div class="ms" id="ctype"></div><div class="ms" id="region"></div><div class="ms" id="contract"></div><div class="ms" id="career"></div>
+<div class="ms" id="src"></div><div class="ms" id="ctype"></div><div class="ms" id="feat"></div><div class="ms" id="listing"></div><div class="ms" id="region"></div><div class="ms" id="contract"></div><div class="ms" id="career"></div>
 <label class="yrs" id="yrs">연차 <input id="ymin" type="number" min="0" max="30" inputmode="numeric" aria-label="최소 연차">~<input id="ymax" type="number" min="0" max="30" inputmode="numeric" aria-label="최대 연차">년</label>
 <button id="bm" aria-pressed="false">★ 북마크</button><button id="reset">초기화</button><span id="count"></span>
 <select id="sort" aria-label="정렬"><option value="new">최신 수집순</option><option value="due">마감 임박순</option><option value="sal">연봉 정보 우선</option></select></div>
@@ -491,7 +541,7 @@ body.dragging #frame{pointer-events:none}
 <section id="view" aria-label="공고 원문"><div id="vbar"><span id="vtitle"></span><span id="valt"></span><a id="vopen" target="_blank" rel="noopener">새 탭 ↗</a>
 <button id="vclose" aria-label="분할 뷰 닫기">×</button></div>
 <iframe id="frame" title="공고 원문" sandbox="allow-scripts allow-same-origin allow-popups allow-forms" referrerpolicy="no-referrer"></iframe>
-<div id="blocked">이 사이트(원티드)는 다른 페이지 안에서 열리는 것을 막고 있어요.<br><a id="bopen" class="go" target="_blank" rel="noopener">원문 공고 새 탭에서 보기 ↗</a></div>
+<div id="blocked">이 사이트는 다른 페이지 안에서 열리는 것을 막고 있어요.<br><a id="bopen" class="go" target="_blank" rel="noopener">원문 공고 새 탭에서 보기 ↗</a></div>
 </section></main>
 <script>
 const JOBS = <?!= data ?>, CATS = <?!= cats ?>, RUN = <?!= run ?>;
@@ -500,7 +550,7 @@ const PREV = (() => { try { const last = +localStorage.getItem('lastVisit') || 0
   const now = Date.now(); if (now - last > 30 * 60e3) { localStorage.setItem('prevVisit', last); localStorage.setItem('lastVisit', now); return last || now - 864e5; }
   return prev || now - 864e5; } catch (e) { return Date.now() - 864e5; } })();
 const isNew = j => j.ts && j.ts > PREV;
-const NO_FRAME = ['원티드']; // X-Frame-Options로 삽입 차단
+const NO_FRAME = []; // X-Frame-Options로 삽입을 막는 사이트 (지금은 없음)
 let cat = CATS[0], onlyBm = false, selId = null;
 const $ = id => document.getElementById(id);
 const bm = new Set(JSON.parse((()=>{try{return localStorage.getItem('bm')}catch(e){}})()||'[]'));
@@ -520,11 +570,11 @@ const rangeOf = j => { const c = String(j.career||'');
 function yearsOk(j, a, b){ if (a==='' && b==='') return true; const r = rangeOf(j); if (!r) return false;
   const lo = a==='' ? 0 : +a, hi = b==='' ? 99 : +b; return r[0] <= hi && r[1] >= lo; }
 // 다중 선택 필터: 각 필터는 선택값 Set, 비어 있으면 '전체'
-const MS = { src: ['사이트', j => (j.sources || [{source: j.source}]).map(x => x.source)], ctype: ['기업형태', j => j.companyType || '미분류'], region: ['지역', regionOf],
+const MS = { src: ['사이트', j => (j.sources || [{source: j.source}]).map(x => x.source)], ctype: ['기업형태', j => j.companyType || '미분류'], feat: ['특성', j => j.feats && j.feats.length ? j.feats : '해당 없음'], listing: ['상장', j => j.listing || '미확인'], region: ['지역', regionOf],
   contract: ['계약형태', j => j.contract || '미표기'], career: ['경력', careerOf] };
 const SEL = Object.fromEntries(Object.keys(MS).map(k => [k, new Set()]));
-const ORDER = { ctype: ['대기업','중견기업','중소기업','스타트업','외국계','공기업·공공기관','미분류'], career: ['신입','신입·경력','경력','경력무관','미표기'],
-  src: ['원티드','점핏','사람인','잡코리아','인크루트'] };
+const ORDER = { listing: ['유가증권','코스닥','코넥스','비상장','미확인'], ctype: ['대기업','중견기업','중소기업','공기업·공공기관','미분류'], feat: ['외국계','스타트업','해당 없음'], career: ['신입','신입·경력','경력','경력무관','미표기'],
+  src: ['점핏','사람인','잡코리아','인크루트'] };
 function fillMulti(id, inCat){
   const [label, fn] = MS[id], cnt = {};
   inCat.forEach(j => [].concat(fn(j)).forEach(v => cnt[v] = (cnt[v]||0) + 1));
@@ -552,7 +602,8 @@ function render(){
   $('count').textContent = list.length + '건';
   $('list').innerHTML = list.map(j => '<div class="card'+(key(j)===selId?' sel':'')+'" data-k="'+esc(key(j))+'" tabindex="0">'+
     '<button class="star'+(bm.has(key(j))?' on':'')+'" data-star="'+esc(key(j))+'" aria-label="북마크">★</button>'+
-    (isNew(j)?'<span class="chip new">NEW</span>':'')+ddChip(j)+(j.sources||[{source:j.source}]).map(x=>'<span class="chip">'+esc(x.source)+'</span>').join('')+(j.companyType&&j.companyType!=='미분류'?'<span class="chip co">'+esc(j.companyType)+'</span>':'')+
+    (isNew(j)?'<span class="chip new">NEW</span>':'')+ddChip(j)+(j.sources||[{source:j.source}]).map(x=>'<span class="chip">'+esc(x.source)+'</span>').join('')+(j.companyType&&j.companyType!=='미분류'?'<span class="chip co">'+esc(j.companyType)+'</span>':'')+(j.feats||[]).map(t=>'<span class="chip co">'+esc(t)+'</span>').join('')+
+    (/유가증권|코스닥|코넥스/.test(j.listing||'')?'<span class="chip ls">'+esc(j.listing)+'</span>':'')+
     '<span class="chip ct">'+esc(j.contract||'미표기')+'</span><span class="chip cr">'+esc(j.career||'경력 미표기')+'</span>'+
     (j.salary?String(j.salary).split(', ').map(x=>'<span class="chip sal">'+esc(x)+'</span>').join(''):'')+
     '<h3>'+esc(j.title)+'</h3><div class="meta">'+esc(j.company)+' · '+esc(j.location)+' · 마감 '+esc(j.due || j.deadline)+'</div>'+
@@ -608,6 +659,6 @@ $('gutter').onpointerup = $('gutter').onpointercancel = () => { document.body.cl
 $('gutter').onkeydown = e => { const cur = parseFloat(getComputedStyle(document.body).getPropertyValue('--vw')) || 50;
   if (e.key==='ArrowLeft') setVw(cur + 5); if (e.key==='ArrowRight') setVw(cur - 5); };
 if (RUN) $('runst').innerHTML = '<span>마지막 수집 '+esc(RUN.at)+'</span>' + Object.keys(RUN.status).map(n => { const x = RUN.status[n];
-  return x.state === '정상' ? '' : '<span class="bad" title="받은 공고 '+x.raw+'건">'+esc(n)+' '+esc(x.state)+'</span>'; }).join('');
+  return x.state === '정상' || !ORDER.src.includes(n) ? '' : '<span class="bad" title="받은 공고 '+x.raw+'건">'+esc(n)+' '+esc(x.state)+'</span>'; }).join('');
 renderTabs(); render();
 </script></body></html>`;
