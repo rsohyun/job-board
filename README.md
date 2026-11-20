@@ -1,11 +1,11 @@
-# 채용 보드 (Job Board)
+# 데이터 분야 취준생 · 이직러를 위한 채용보드
 
 4개 채용 사이트의 공고를 매일 자동으로 모아 **직무별로 한 화면에서 비교**하는 개인 프로젝트입니다.
 서버 없이 **Google Sheets(저장) + Google Apps Script(수집·웹앱)** 만으로 동작합니다.
 
 **데모:** https://script.google.com/macros/s/AKfycbyqwvf315QG05Z7w8d-xo4szlatrg8TCUiqiO00QHiQG4a3uwCgilBUh16fnirgd3M1/exec (Google 계정 로그인 필요)
 
-![채용 보드 메인 화면](docs/board.png)
+![메인 화면](docs/board.png)
 
 ## 핵심 기능
 
@@ -18,15 +18,20 @@
 | 필터 | 사이트, 기업형태, 특성, 상장, 지역, 계약형태, 경력, 연차 범위 (다중 선택) |
 | 공고 정리 | 마감일 통일·D-day, 마감·장기 미노출 공고 자동 숨김, 연봉 태그, NEW 배지 |
 | 분할 뷰 | 카드를 누르면 오른쪽에 원문 공고, 폭 조절 가능 |
+| 모바일 | 필터 줄을 접고 펼 수 있음 |
 | 모니터링 | 사이트별 수집 결과 기록, 실패·0건이면 메일 알림 |
 
 ![분할 뷰](docs/split-view.png)
+
+| 모바일 (필터 접힘) | 모바일 (필터 펼침) |
+|:---:|:---:|
+| <img src="docs/mobile-closed.png" width="260"> | <img src="docs/mobile-open.png" width="260"> |
 
 ## 구조
 
 ```
 트리거(06~07시) → collectJobs()
-   ├ 사이트별 수집 (API / 검색 결과 HTML) → 직무 판정 → jobs_v3 시트에 추가·갱신
+   ├ 사이트별 수집 (API / 검색 결과 HTML) → 직무 판정 → job_list 시트에 추가·갱신
    ├ 새 공고 상세에서 기업 정보 읽기
    └ 화면용 데이터 캐시 생성 · 수집 기록(runs) · 문제 시 메일
 
@@ -35,7 +40,7 @@
 
 | 시트 탭 | 용도 |
 |---|---|
-| `jobs_v3` | 공고 |
+| `job_list` | 공고 |
 | `runs` | 수집 기록 |
 | `merged` | 합쳐진 공고 확인용 |
 | `aliases` | 회사명 별칭 (예: `Klemove → 클레무브`) |

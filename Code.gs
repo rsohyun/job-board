@@ -10,7 +10,7 @@ const CATEGORIES = [
     ex: /자동차|기계|설비|(?<!온)라인|생산(?!성)|공장|제조|PLC|제어|전기|전장|금형|용접|현장|로봇\s*(조작|운영)|반도체\s*장비|정비|시공|배관/ },
   { name: 'AX 컨설턴트', kw: 'AX 컨설턴트', kws: ['AX 컨설턴트', 'AI 전환', 'DX 컨설팅'], re: /AX|컨설턴트|컨설팅|consult|전환/i },
 ];
-const SHEET = 'jobs_v3'; // 스키마(경력 열)가 바뀌어 새 시트 사용 (기존 시트는 그대로 둠)
+const SHEET = 'job_list';
 const HEADERS = ['category', 'source', 'id', 'title', 'company', 'stack', 'location', 'contract', 'career', 'deadline', 'link', 'collected_at', 'salary', 'last_seen', 'csize', 'ctags']; // 뒤의 두 열은 나중에 추가돼 맨 끝
 const UA = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130 Safari/537.36' };
 const CONTRACT_RE = /정규직|계약직|인턴|프리랜서|파견직|아르바이트|위촉직/;
@@ -22,7 +22,8 @@ const contractOf = s => ((String(s).match(CONTRACT_RE) || [])[0]) || (/계약/.t
 
 function getSheet_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sh = ss.getSheetByName(SHEET) || ss.insertSheet(SHEET);
+  const old = ss.getSheetByName('jobs_v3'); // 예전 이름이면 한 번 이름만 바꿈
+  const sh = ss.getSheetByName(SHEET) || (old && old.setName(SHEET)) || ss.insertSheet(SHEET);
   if (sh.getLastRow() === 0) sh.appendRow(HEADERS);
   else if (sh.getLastColumn() < HEADERS.length) sh.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]); // 기존 시트에 새 열 헤더 추가
   return sh;
@@ -453,7 +454,7 @@ function doGet(e) {
   t.data = pageData_();
   t.cats = JSON.stringify(CATEGORIES.map(c => c.name));
   t.run = JSON.stringify(lastRun_());
-  return t.evaluate().setTitle('채용 보드').addMetaTag('viewport', 'width=device-width, initial-scale=1');
+  return t.evaluate().setTitle('데이터 분야 취준생 · 이직러를 위한 채용보드').addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
 const PAGE = `<!doctype html><html><head><meta charset="utf-8">
@@ -463,7 +464,7 @@ const PAGE = `<!doctype html><html><head><meta charset="utf-8">
 body{font-family:'Pretendard Variable',Pretendard,system-ui,'Malgun Gothic',sans-serif;margin:0;background:#f4f6fa;color:#1b2333;display:flex;flex-direction:column;letter-spacing:-.01em}
 header{background:linear-gradient(120deg,#1e3a8a,#3b5bdb);color:#fff;padding:18px 20px 14px}
 h1{margin:0;font-size:21px;font-weight:800;letter-spacing:-.02em}.sub{font-size:12.5px;opacity:.75;margin-top:3px}
-.tabs{display:inline-flex;gap:4px;margin-top:14px;padding:4px;background:rgba(255,255,255,.14);border-radius:12px;overflow-x:auto;max-width:100%}
+.tabs{display:inline-flex;gap:4px;margin-top:14px;padding:4px;background:rgba(255,255,255,.14);border-radius:12px;overflow-x:auto;max-width:100%;scrollbar-width:none}.tabs::-webkit-scrollbar{display:none}
 .tabs button{border:0;border-radius:9px;padding:8px 16px;background:transparent;color:rgba(255,255,255,.85);font:inherit;font-size:14.5px;font-weight:600;cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:6px;transition:background .15s,color .15s}
 .tabs button:hover{background:rgba(255,255,255,.12);color:#fff}
 .tabs button.on{background:#fff;color:#1e3a8a;box-shadow:0 2px 6px rgba(0,0,0,.12)}
@@ -484,7 +485,7 @@ select{cursor:pointer}input:focus,select:focus{outline:2px solid #c7d2fe;border-
 .ms>button{display:flex;align-items:center;gap:6px;cursor:pointer;white-space:nowrap}
 .ms>button::after{content:'';width:6px;height:6px;border:solid #8a94a6;border-width:0 1.5px 1.5px 0;transform:rotate(45deg) translateY(-2px);margin-left:2px}
 .ms.set>button{border-color:#3b5bdb;background:#eef2ff;color:#1e3a8a;font-weight:600}
-.ms .b{font-size:11px;font-weight:700;background:#3b5bdb;color:#fff;border-radius:99px;padding:0 6px;line-height:16px}
+.ms .b,#ftog .b{font-size:11px;font-weight:700;background:#3b5bdb;color:#fff;border-radius:99px;padding:0 6px;line-height:16px}
 .ms .pop{display:none;position:absolute;top:36px;left:0;z-index:10;min-width:170px;max-height:300px;overflow-y:auto;background:#fff;
   border:1px solid #e1e6ef;border-radius:10px;box-shadow:0 8px 24px rgba(20,30,60,.14);padding:6px}
 .ms.open .pop{display:block}
@@ -506,6 +507,9 @@ select{cursor:pointer}input:focus,select:focus{outline:2px solid #c7d2fe;border-
 body.split .grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 @media (max-width:900px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:600px){.grid,body.split .grid{grid-template-columns:1fr}}
+#ftog{display:none}
+/* 모바일: 검색·정렬만 두고 나머지 필터는 '필터' 버튼으로 펼침 */
+@media (max-width:600px){#ftog{display:inline-flex;align-items:center;gap:4px}h1{font-size:17px}#q{flex:1 1 100%}.bar:not(.open) .ms,.bar:not(.open) .yrs,.bar:not(.open) #bm,.bar:not(.open) #reset{display:none}}
 .card{background:#fff;border-radius:10px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.08);position:relative;cursor:pointer;border:2px solid transparent}
 .card:hover,.card.sel{border-color:#1f3a8a}.card h3{margin:6px 28px 4px 0;font-size:15px}
 .chip{display:inline-block;font-size:12px;padding:2px 8px;border-radius:99px;background:#e8eefc;color:#1f3a8a;margin:0 4px 2px 0}
@@ -528,10 +532,10 @@ body.dragging #frame{pointer-events:none}
 .go{display:inline-block;margin-top:14px;padding:12px 20px;border-radius:8px;background:#1f3a8a;color:#fff;text-decoration:none;font-weight:600}
 @media (max-width:700px){body.split #left,body.split #gutter{display:none}body.split #view{flex:1;max-width:none}}
 </style></head><body>
-<header><h1>채용 보드</h1><div class="sub">점핏 · 사람인 · 잡코리아 · 인크루트 자동 수집 · 매일 06~07시<span class="runst" id="runst"></span></div>
+<header><h1>데이터 분야 취준생 · 이직러를 위한 채용보드</h1><div class="sub">점핏 · 사람인 · 잡코리아 · 인크루트 자동 수집 · 매일 06~07시<span class="runst" id="runst"></span></div>
 <div class="tabs" id="tabs" role="tablist"></div></header>
 <main><div id="left">
-<div class="bar"><input id="q" placeholder="회사·직무·기술스택 검색 (예: SQL, MVP)" aria-label="키워드 검색">
+<div class="bar" id="bar"><input id="q" placeholder="회사·직무·기술스택 검색 (예: SQL, MVP)" aria-label="키워드 검색"><button id="ftog" aria-expanded="false" aria-controls="bar">필터</button>
 <div class="ms" id="src"></div><div class="ms" id="ctype"></div><div class="ms" id="feat"></div><div class="ms" id="listing"></div><div class="ms" id="region"></div><div class="ms" id="contract"></div><div class="ms" id="career"></div>
 <label class="yrs" id="yrs">연차 <input id="ymin" type="number" min="0" max="30" inputmode="numeric" aria-label="최소 연차">~<input id="ymax" type="number" min="0" max="30" inputmode="numeric" aria-label="최대 연차">년</label>
 <button id="bm" aria-pressed="false">★ 북마크</button><button id="reset">초기화</button><span id="count"></span>
@@ -600,6 +604,8 @@ function render(){
   if ($('sort').value === 'sal') list.sort((a, b) => (b.salary ? 1 : 0) - (a.salary ? 1 : 0));
   if ($('sort').value === 'due') list.sort((a, b) => (a.due || '9999') < (b.due || '9999') ? -1 : (a.due || '9999') > (b.due || '9999') ? 1 : 0);
   $('count').textContent = list.length + '건';
+  const nf = Object.values(SEL).reduce((a, x) => a + x.size, 0) + ($('ymin').value !== '' || $('ymax').value !== '' ? 1 : 0) + (onlyBm ? 1 : 0);
+  $('ftog').innerHTML = '필터' + (nf ? ' <span class="b">' + nf + '</span>' : '') + ($('bar').classList.contains('open') ? ' ▴' : ' ▾');
   $('list').innerHTML = list.map(j => '<div class="card'+(key(j)===selId?' sel':'')+'" data-k="'+esc(key(j))+'" tabindex="0">'+
     '<button class="star'+(bm.has(key(j))?' on':'')+'" data-star="'+esc(key(j))+'" aria-label="북마크">★</button>'+
     (isNew(j)?'<span class="chip new">NEW</span>':'')+ddChip(j)+(j.sources||[{source:j.source}]).map(x=>'<span class="chip">'+esc(x.source)+'</span>').join('')+(j.companyType&&j.companyType!=='미분류'?'<span class="chip co">'+esc(j.companyType)+'</span>':'')+(j.feats||[]).map(t=>'<span class="chip co">'+esc(t)+'</span>').join('')+
@@ -648,6 +654,7 @@ $('reset').onclick = () => { ['q','ymin','ymax'].forEach(id => $(id).value = '')
   onlyBm = false; $('bm').classList.remove('on'); render(); };
 $('q').oninput = $('ymin').oninput = $('ymax').oninput = render;
 $('sort').onchange = render;
+$('ftog').onclick = () => { const o = $('bar').classList.toggle('open'); $('ftog').setAttribute('aria-expanded', o); render(); };
 // 분할 뷰 크기 조절: 드래그(또는 ←/→ 키)로 오른쪽 폭(%) 변경, 브라우저에 기억
 const setVw = p => { p = Math.min(80, Math.max(20, p)); document.body.style.setProperty('--vw', p + '%'); try{localStorage.setItem('vw', p)}catch(e){} };
 try{ const v = +localStorage.getItem('vw'); if (v) setVw(v); }catch(e){}
