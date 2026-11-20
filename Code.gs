@@ -223,10 +223,10 @@ function updateCompanyTypes_() {
   return rows.length;
 }
 
-/** 매일 오전 9시 자동 수집 트리거 설치 (한 번만 실행) */
+/** 매일 새벽 6~7시 자동 수집 트리거 설치 (한 번만 실행). Google 트리거는 지정한 시각부터 1시간 안의 임의 시점에 실행됨 */
 function installTrigger() {
   ScriptApp.getProjectTriggers().forEach(t => ScriptApp.deleteTrigger(t));
-  ScriptApp.newTrigger('collectJobs').timeBased().everyDays(1).atHour(9).create();
+  ScriptApp.newTrigger('collectJobs').timeBased().everyDays(1).atHour(6).create();
 }
 
 function getJobs() {
@@ -385,7 +385,7 @@ body.dragging #frame{pointer-events:none}
 .go{display:inline-block;margin-top:14px;padding:12px 20px;border-radius:8px;background:#1f3a8a;color:#fff;text-decoration:none;font-weight:600}
 @media (max-width:700px){body.split #left,body.split #gutter{display:none}body.split #view{flex:1;max-width:none}}
 </style></head><body>
-<header><h1>채용 보드</h1><div class="sub">원티드 · 점핏 · 사람인 · 잡코리아 · 인크루트 자동 수집 · 매일 09시<span class="runst" id="runst"></span></div>
+<header><h1>채용 보드</h1><div class="sub">원티드 · 점핏 · 사람인 · 잡코리아 · 인크루트 자동 수집 · 매일 06~07시<span class="runst" id="runst"></span></div>
 <div class="tabs" id="tabs" role="tablist"></div></header>
 <main><div id="left">
 <div class="bar"><input id="q" placeholder="회사·직무·기술스택 검색 (예: SQL, MVP)" aria-label="키워드 검색">
