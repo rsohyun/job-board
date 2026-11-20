@@ -299,7 +299,11 @@ function dueOf_(raw, collected) {
  *  조건: ① 서로 다른 사이트 ② 회사명이 같음(법인 표기·괄호 속 영문/브랜드·지점명 무시, 한쪽이 다른 쪽을 포함해도 인정)
  *        ③ 제목이 같거나, 유사도 0.75 이상이면서 신입/경력·계약직·기수·연차 같은 구분 단어가 충돌하지 않음 */
 const normTitle = t => String(t).replace(/\[[^\]]*\]/g, '').replace(/[^0-9a-z가-힣()]/gi, '').toLowerCase();
-const coKey_ = s => String(s).replace(/\(주\)|㈜|주식회사|\(유\)|유한회사|\(재\)|\(사\)|농업회사법인|사단법인|재단법인/g, '')
+// 영문 약자(대문자 2~6자)는 알파벳 한글 읽기로 바꿔 비교: NHN → 엔에이치엔, IGM → 아이지엠, SK → 에스케이
+const ABC_KO = { A: '에이', B: '비', C: '씨', D: '디', E: '이', F: '에프', G: '지', H: '에이치', I: '아이', J: '제이', K: '케이', L: '엘', M: '엠',
+  N: '엔', O: '오', P: '피', Q: '큐', R: '알', S: '에스', T: '티', U: '유', V: '브이', W: '더블유', X: '엑스', Y: '와이', Z: '제트' };
+const readAcronyms_ = s => String(s).replace(/[A-Z]{2,6}(?![a-z])/g, w => w.split('').map(c => ABC_KO[c]).join(''));
+const coKey_ = s => readAcronyms_(s).replace(/\(주\)|㈜|주식회사|\(유\)|유한회사|\(재\)|\(사\)|농업회사법인|사단법인|재단법인/g, '')
   .replace(/\([^)]*\)/g, '').replace(/\S*(사옥|지점|본점)/g, '').replace(/\s/g, '').toLowerCase();
 const titleKey_ = t => strip(t).replace(/\[[^\]]*\]/g, '').replace(/채용\s*공고|채용|모집|공고|입니다|합니다/g, '')
   .replace(/[^0-9a-z가-힣]/gi, '').toLowerCase();
